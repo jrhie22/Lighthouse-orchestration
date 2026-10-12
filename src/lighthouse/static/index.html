@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lighthouse</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%276%27 fill=%27%231d5fd1%27/%3E%3Cpath d=%27M16 5l5 18h-10zM9 26h14%27 stroke=%27white%27 stroke-width=%272%27 fill=%27none%27/%3E%3C/svg%3E">
+<!--
+  Lighthouse front end, phase 1: ONE file, no build step, no framework.
+  It talks to the backend only through the HTTP API (see /docs), so it can be replaced by a React app later
+  without touching any Python. Sections of this file:  1) styles  2) tiny helpers  3) API client
+  4) views (case, audit, admin)  5) routing.  Every piece of server data is inserted with textContent
+  (never innerHTML), so a malicious case title cannot inject script.
+-->
+<style>
+:root {
+  --bg: #f4f6fa; --panel: #ffffff; --ink: #172033; --muted: #5d6b82; --line: #dde3ee; --accent: #1d5fd1; --accent-ink: #ffffff;
+  --ok: #17803d; --ok-bg: #e4f5ea; --warn: #9a5b00; --warn-bg: #fff1d6; --bad: #b42318; --bad-bg: #fde8e6;
+  --legal: #6b3fb5; --legal-bg: #efe7fb; --grey: #5d6b82; --grey-bg: #e9edf4; --shadow: 0 1px 2px rgba(20,30,50,.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1522; --panel: #171f31; --ink: #e8edf7; --muted: #9aa8c2; --line: #2a3550; --accent: #6ea1ff; --accent-ink: #0b1220;
+    --ok: #5fd08a; --ok-bg: #12301f; --warn: #f2b45c; --warn-bg: #3a2a0c; --bad: #ff8d84; --bad-bg: #3b1714;
+    --legal: #c1a4f5; --legal-bg: #2a1f45; --grey: #9aa8c2; --grey-bg: #222c44; --shadow: none;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, input, select, textarea { font: inherit; color: inherit; }
+header.top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 10px 20px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+header.top h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+header.top h1 span { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 8px; }
+header.top nav { display: flex; gap: 4px; margin-left: 12px; }
+header.top nav a { padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+header.top nav a.on { background: var(--grey-bg); color: var(--ink); font-weight: 600; }
+.spacer { flex: 1; }
+.who { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+.who select, .who input { padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+.who input { width: 130px; }
+main { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 16px; padding: 16px 20px 60px; max-width: 1500px; margin: 0 auto; }
+@media (max-width: 900px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 60px; } }
+main > * { min-width: 0; }
+aside > section, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; box-shadow: var(--shadow); margin-bottom: 14px; }
+h2 { font-size: 16px; margin: 0 0 8px; } h3 { font-size: 13px; margin: 0 0 6px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.muted { color: var(--muted); } .small { font-size: 12px; } .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button.danger { color: var(--bad); border-color: var(--bad); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; } .tabs button { flex: 1; } .tabs button.on { background: var(--grey-bg); font-weight: 600; }
+.scn { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-bottom: 8px; }
+.scn b { display: block; } .scn p { margin: 2px 0 6px; color: var(--muted); font-size: 12px; }
+label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 2px; }
+input[type=text], input[type=number], select, textarea { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+textarea { min-height: 70px; resize: vertical; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+ul.cases { list-style: none; padding: 0; margin: 0; max-height: 360px; overflow: auto; }
+ul.cases li { padding: 7px 8px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; }
+ul.cases li:hover { background: var(--grey-bg); } ul.cases li.on { border-color: var(--accent); background: var(--grey-bg); }
+ul.cases .t { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--grey-bg); color: var(--grey); white-space: nowrap; }
+.chip.PROCEED, .chip.APPROVED, .chip.CLEARED, .chip.CLEARED_WITH_EDITS, .chip.ok { background: var(--ok-bg); color: var(--ok); }
+.chip.PROCEED_WITH_CONDITIONS, .chip.warn, .chip.READY_FOR_DECISION, .chip.RUNNING { background: var(--warn-bg); color: var(--warn); }
+.chip.HOLD, .chip.REJECTED, .chip.BLOCKED, .chip.LEGAL_BLOCKED, .chip.INVALID, .chip.TIMEOUT, .chip.FAILED, .chip.bad { background: var(--bad-bg); color: var(--bad); }
+.chip.REVIEW_REQUIRED, .chip.PENDING, .chip.AWAITING_LEGAL, .chip.legal { background: var(--legal-bg); color: var(--legal); }
+.banner { border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid; }
+.banner.legal { background: var(--legal-bg); color: var(--legal); border-color: var(--legal); }
+.banner.bad { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+.banner.ok { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+.banner.warn { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+.banner b { color: inherit; }
+.pipe { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 14px; }
+@media (max-width: 700px) { .pipe { grid-template-columns: 1fr 1fr; } }
+.stage { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); min-height: 58px; }
+.stage .n { font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); }
+.stage.running { border-color: var(--accent); } .stage.running .st::after { content: ""; display: inline-block; width: 10px; height: 10px; margin-left: 6px; border: 2px solid var(--accent); border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.rec { display: flex; gap: 14px; align-items: flex-start; flex-wrap: wrap; }
+.rec .big { font-size: 20px; padding: 4px 14px; }
+.agents { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.agent { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: var(--panel); }
+.agent header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.bar { height: 6px; background: var(--grey-bg); border-radius: 3px; overflow: hidden; margin: 4px 0 8px; } .bar > i { display: block; height: 100%; background: var(--accent); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 12px; } .kv dt { color: var(--muted); } .kv dd { margin: 0; text-align: right; }
+.evid { display: inline-block; margin: 2px 4px 2px 0; padding: 0 6px; font-size: 12px; font-family: ui-monospace, monospace; border-radius: 4px; border: 1px solid var(--line); background: var(--panel); cursor: pointer; }
+.evid:hover { border-color: var(--accent); }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; } @media (max-width: 900px) { .two { grid-template-columns: 1fr; } }
+ul.plain { margin: 4px 0 0; padding-left: 18px; } ul.plain li { margin: 2px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; } th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; }
+details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin: 4px 0; }
+pre { margin: 4px 0; padding: 8px; border-radius: 6px; background: var(--grey-bg); overflow: auto; max-height: 260px; font-size: 12px; }
+dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); max-width: 640px; width: 92vw; }
+dialog::backdrop { background: rgba(0,0,0,.4); }
+#toasts { position: fixed; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 20; max-width: 420px; }
+.toast { padding: 10px 14px; border-radius: 8px; background: var(--ink); color: var(--bg); box-shadow: 0 4px 14px rgba(0,0,0,.25); } .toast.err { background: var(--bad); color: #fff; }
+footer { text-align: center; color: var(--muted); font-size: 12px; padding: 0 16px 24px; max-width: 900px; margin: 0 auto; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>Lighthouse <span>decision control plane · prototype</span></h1>
+  <nav id="nav"></nav>
+  <div class="spacer"></div>
+  <span id="llm" class="chip" title="Local language model status (only needed for mode = agent)">LLM: …</span>
+  <div class="who">
+    <label for="role" style="margin:0">Viewing as</label>
+    <select id="role"></select>
+    <input id="actor" type="text" aria-label="Your name" placeholder="your name">
+  </div>
+</header>
+
+<main>
+  <aside>
+    <section>
+      <div class="tabs"><button id="tab-scn" class="on">Scripted scenarios</button><button id="tab-new">New case</button></div>
+      <div id="new-panel"></div>
+    </section>
+    <section>
+      <div class="row" style="justify-content:space-between"><h3 style="margin:0">Cases</h3><button id="reload" class="small" title="Reload list">↻</button></div>
+      <ul class="cases" id="cases"></ul>
+    </section>
+  </aside>
+  <div id="view"><div class="card muted">Pick a scripted scenario on the left, or open a new case.</div></div>
+</main>
+
+<footer>
+  All data in this prototype is <b>synthetic</b> (generated pilot data). Agents in <i>rules</i> and <i>replay</i> mode are <b>simulated</b> agent outputs.
+  Legal output is a compliance-risk indicator, not legal advice. The audit trail is tamper-evident, not tamper-proof.
+</footer>
+
+<dialog id="dlg"><div id="dlg-body"></div><div class="row" style="justify-content:flex-end;margin-top:10px"><button id="dlg-close">Close</button></div></dialog>
+<div id="toasts"></div>
+
+<script>
+"use strict";
+/* ============ 2) tiny helpers ============ */
+const $ = (s, el = document) => el.querySelector(s);
+const h = (tag, props = {}, ...kids) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat()) { if (kid == null || kid === false) continue; el.append(kid.nodeType ? kid : document.createTextNode(String(kid))); }
+  return el;
+};
+const put = (el, ...kids) => { for (const k of kids.flat()) if (k != null && k !== false) el.append(k); return el; };
+const chip = (text, cls = text) => h("span", { class: "chip " + cls }, String(text).replaceAll("_", " "));
+const usd = n => n == null ? "–" : (n < 0 ? "-$" : "$") + Math.abs(Math.round(n)).toLocaleString();
+const c2 = n => n == null ? "–" : Number(n).toFixed(2);
+const when = s => s ? s.replace("T", " ").replace(/\+00:00$/, "Z") : "";
+const clear = el => { while (el.firstChild) el.removeChild(el.firstChild); return el; };
+const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
+
+function toast(msg, kind = "") {
+  const t = h("div", { class: "toast " + kind }, msg);
+  $("#toasts").append(t);
+  setTimeout(() => t.remove(), kind === "err" ? 9000 : 4000);
+}
+
+/* ============ 3) API client ============ */
+const ROLES = {
+  decision_owner: ["Decision Owner", "owner@demo"], legal_reviewer: ["Legal Reviewer", "counsel@demo"],
+  finance_reviewer: ["Finance Reviewer (read-only)", "finance@demo"], sales_reviewer: ["Sales Reviewer (read-only)", "sales@demo"],
+  operations_reviewer: ["Operations Reviewer (read-only)", "ops@demo"], admin: ["Admin", "admin@demo"],
+};
+const state = { role: store.get("lh.role", "decision_owner"), actor: store.get("lh.actor", ""), caseId: null, stream: null, token: 0 };
+if (!ROLES[state.role]) state.role = "decision_owner";
+if (!state.actor) state.actor = ROLES[state.role][1];
+
+async function api(path, { method = "GET", body } = {}) {
+  let res;
+  try {
+    res = await fetch(path, { method, headers: { "Content-Type": "application/json", "X-Role": state.role, "X-Actor": state.actor }, body: body ? JSON.stringify(body) : undefined });
+  } catch (e) { return { ok: false, status: 0, data: { message: "Cannot reach the server: " + e.message } }; }
+  let data = null; try { data = await res.json(); } catch {}
+  return { ok: res.ok, status: res.status, data };
+}
+function errText(r) {
+  const d = r.data;
+  if (!d) return "HTTP " + r.status;
+  if (d.code) return d.code + ": " + d.message;
+  if (typeof d.detail === "string") return d.detail;
+  if (Array.isArray(d.detail)) return d.detail.map(x => (x.loc || []).slice(1).join(".") + ": " + x.msg).join("; ");
+  return d.message || JSON.stringify(d);
+}
+
+/* ============ header: role switcher, LLM status, navigation ============ */
+function initHeader() {
+  const sel = $("#role");
+  for (const [k, [label]] of Object.entries(ROLES)) sel.append(h("option", { value: k, selected: k === state.role }, label));
+  sel.onchange = () => { state.role = sel.value; state.actor = ROLES[state.role][1]; $("#actor").value = state.actor; store.set("lh.role", state.role); store.set("lh.actor", state.actor); route(); };
+  $("#actor").value = state.actor;
+  $("#actor").onchange = e => { state.actor = e.target.value.trim() || ROLES[state.role][1]; store.set("lh.actor", state.actor); };
+  const nav = $("#nav");
+  for (const [href, label] of [["#/", "Cases"], ["#/audit", "Audit log"], ["#/admin", "Admin"]]) nav.append(h("a", { href, "data-h": href }, label));
+  api("/health").then(r => {
+    const o = r.data && r.data.ollama, el = $("#llm");
+    if (o && o.available) { el.textContent = "LLM: " + o.model + " ready"; el.className = "chip ok"; }
+    else { el.textContent = "LLM: not running (mode = rules only)"; el.className = "chip"; }
+  });
+}
+function markNav() {
+  const cur = location.hash.startsWith("#/audit") ? "#/audit" : location.hash.startsWith("#/admin") ? "#/admin" : "#/";
+  document.querySelectorAll("#nav a").forEach(a => a.classList.toggle("on", a.dataset.h === cur));
+}
+
+/* ============ sidebar: scenarios, new case, case list ============ */
+let scenarios = [];
+async function initSidebar() {
+  $("#tab-scn").onclick = () => showNewTab("scn");
+  $("#tab-new").onclick = () => showNewTab("new");
+  $("#reload").onclick = loadCases;
+  const r = await api("/scenarios"); scenarios = r.ok ? r.data : [];
+  showNewTab("scn"); loadCases();
+}
+function showNewTab(which) {
+  $("#tab-scn").classList.toggle("on", which === "scn"); $("#tab-new").classList.toggle("on", which === "new");
+  const p = clear($("#new-panel"));
+  if (which === "scn") {
+    for (const s of scenarios) {
+      p.append(h("div", { class: "scn" }, h("b", {}, s.title), h("p", {}, s.description),
+        h("div", { class: "row" }, chip(s.mode === "replay" ? "scripted agents" : "real rules agents", "warn"),
+          h("span", { class: "spacer" }), h("button", { class: "primary", onclick: () => startCase({ scenario: s.id }) }, "Run"))));
+    }
+    return;
+  }
+  const f = h("form", { onsubmit: e => { e.preventDefault(); submitNewCase(f); } },
+    h("label", {}, "Title"), h("input", { type: "text", name: "title", value: "Health & Wellness six-week promotion", required: true, minlength: 3 }),
+    h("label", {}, "Category"), h("input", { type: "text", name: "category", value: "Health & Wellness", list: "cats", required: true }),
+    h("datalist", { id: "cats" }, ["Health & Wellness", "Grocery", "Electronics", "Apparel", "Home"].map(c => h("option", { value: c }))),
+    h("div", { class: "grid2" },
+      h("div", {}, h("label", {}, "Stores (1–50)"), h("input", { type: "number", name: "stores", value: 50, min: 1, max: 50 })),
+      h("div", {}, h("label", {}, "Weeks (1–26)"), h("input", { type: "number", name: "weeks", value: 6, min: 1, max: 26 })),
+      h("div", {}, h("label", {}, "Discount %"), h("input", { type: "number", name: "discount_pct", value: 2, step: "0.1", min: 0, max: 50 })),
+      h("div", {}, h("label", {}, "Cost ceiling (USD)"), h("input", { type: "number", name: "budget_usd", value: 500000, min: 1000, step: 1000 }))),
+    h("label", {}, "Marketing claims (one per line)"), h("textarea", { name: "claims", placeholder: "supports immune health" }),
+    h("label", {}, "Agents"),
+    h("select", { name: "mode" }, h("option", { value: "rules" }, "rules — deterministic thresholds (instant)"), h("option", { value: "agent" }, "agent — local LLM chooses tools (needs Ollama)")),
+    h("div", { class: "row", style: "margin-top:10px" }, h("button", { class: "primary", type: "submit" }, "Open case")));
+  p.append(f);
+}
+function submitNewCase(f) {
+  const v = Object.fromEntries(new FormData(f));
+  startCase({
+    mode: v.mode,
+    input: { title: v.title, category: v.category, stores: +v.stores, weeks: +v.weeks, discount_pct: +v.discount_pct, budget_usd: +v.budget_usd,
+             claims: v.claims.split("\n").map(s => s.trim()).filter(Boolean) },
+  });
+}
+async function startCase(body) {
+  const r = await api("/cases", { method: "POST", body });
+  if (!r.ok) return toast(errText(r), "err");
+  await loadCases();
+  location.hash = "#/case/" + r.data.decision_id;
+}
+async function loadCases() {
+  const r = await api("/cases?limit=60"); const ul = clear($("#cases"));
+  if (!r.ok) return;
+  if (!r.data.length) ul.append(h("li", { class: "muted" }, "No cases yet."));
+  for (const c of r.data) {
+    ul.append(h("li", { class: c.decision_id === state.caseId ? "on" : "", onclick: () => (location.hash = "#/case/" + c.decision_id) },
+      h("div", { class: "row" }, h("b", { class: "mono" }, c.decision_id), chip(c.status), c.legal_gate === "PENDING" ? chip("legal", "legal") : null),
+      h("span", { class: "t muted" }, c.title)));
+  }
+}
+
+/* ============ 4a) case view ============ */
+const AGENT_ORDER = ["FINANCE", "SALES", "OPERATIONS", "LEGAL"];
+function closeStream() { if (state.stream) { state.stream.close(); state.stream = null; } }
+
+async function showCase(id) {
+  const token = ++state.token; closeStream(); state.caseId = id;
+  const view = clear($("#view"));
+  const r = await api("/cases/" + id);
+  if (token !== state.token) return;
+  if (!r.ok) { view.append(h("div", { class: "card" }, "Could not load " + id + ": " + errText(r))); return; }
+  const c = r.data;
+  const head = h("div", { class: "card" });
+  const pipe = h("div", { class: "pipe" }, AGENT_ORDER.map(a => h("div", { class: "stage", id: "stage-" + a }, h("div", { class: "n" }, a), h("div", { class: "st muted" }, "waiting"))));
+  const body = h("div", { id: "case-body" });
+  view.append(head, pipe, body);
+  renderHead(head, c, null);
+  loadCases();
+
+  if (c.status === "RUNNING") {
+    const es = state.stream = new EventSource("/cases/" + id + "/events");
+    const on = (type, fn) => es.addEventListener(type, e => { if (token === state.token) fn(JSON.parse(e.data).data || {}); });
+    on("agent_started", d => setStage(d.agent, "running", "working"));
+    on("agent_done", d => setStage(d.agent, "done", [d.status === "OK" ? (d.recommendation || "").replaceAll("_", " ") : d.status.replaceAll("_", " "), d.status === "OK" ? "conf " + c2(d.confidence) : ""].filter(Boolean).join(" · ")));
+    on("done", () => { es.close(); state.stream = null; refreshCase(id, token); });
+    on("error", d => { es.close(); state.stream = null; body.append(h("div", { class: "banner bad" }, "Pipeline error: " + (d.message || "unknown"))); });
+    es.onerror = () => { if (es.readyState === 2 && token === state.token) refreshCase(id, token); };
+  } else {
+    await refreshCase(id, token);
+  }
+}
+function setStage(agent, cls, text) {
+  const el = $("#stage-" + agent); if (!el) return;
+  el.className = "stage " + cls; $(".st", el).textContent = text; $(".st", el).className = "st" + (cls === "running" ? "" : "");
+}
+async function refreshCase(id, token) {
+  const [cr, pr] = await Promise.all([api("/cases/" + id), api("/cases/" + id + "/packet")]);
+  if (token !== state.token || !cr.ok) return;
+  renderHead(clear($("#view").firstChild), cr.data, pr.ok ? pr.data : null);
+  const body = clear($("#case-body"));
+  if (!pr.ok) { body.append(h("div", { class: "banner bad" }, "No packet: " + errText(pr))); return; }
+  const p = pr.data;
+  for (const v of p.agents) setStage(v.output.agent, "done", v.output.status === "OK" ? v.output.recommendation.replaceAll("_", " ") + " · conf " + c2(v.effective_confidence) : v.output.status.replaceAll("_", " "));
+  renderPacket(body, cr.data, p);
+  loadCases();
+}
+function renderHead(el, c, p) {
+  clear(el);
+  const i = c.input;
+  put(el,
+    h("div", { class: "row" }, h("h2", { style: "margin:0" }, c.decision_id + " — " + i.title), chip(c.status), p ? gateChip(p.legal_gate) : null,
+      chip(c.mode === "agent" ? "LLM agents" : "simulated agents", c.mode === "agent" ? "ok" : "warn"),
+      c.parent_id ? h("a", { href: "#/case/" + c.parent_id }, "↰ revision of " + c.parent_id) : null),
+    h("div", { class: "muted small", style: "margin-top:4px" },
+      [i.category, i.stores + " stores", i.weeks + " weeks", i.discount_pct + "% discount", "ceiling " + usd(i.budget_usd), i.claims.length ? "claims: " + i.claims.join("; ") : "no claims"].join(" · ")),
+    c.revisions && c.revisions.length ? h("div", { class: "small", style: "margin-top:4px" }, "Revisions: ", c.revisions.map(r => h("a", { href: "#/case/" + r, style: "margin-right:8px" }, r))) : null);
+}
+const gateChip = g => g === "NOT_REQUIRED" ? null : chip("legal " + g.toLowerCase(), g);
+
+function renderPacket(body, c, p) {
+  // --- banners: the things a decision-maker must not miss
+  if (p.legal_gate === "PENDING") body.append(h("div", { class: "banner legal" }, h("b", {}, "Approval locked. "), "Legal review is required before this case can be approved. ", ...p.escalations.filter(e => e.code === "LEGAL_GATE").map(e => e.detail)));
+  if (p.legal_gate === "BLOCKED") body.append(h("div", { class: "banner bad" }, h("b", {}, "Legal blocked this case. "), "It cannot be approved; it can only be rejected or revised."));
+  if (p.legal_gate === "CLEARED") body.append(h("div", { class: "banner ok" }, h("b", {}, "Legal cleared. "), "Approval is unlocked."));
+  if (p.incomplete) body.append(h("div", { class: "banner bad" }, h("b", {}, "Incomplete packet. "), "A required agent produced no usable output, so the recommendation defaults to HOLD."));
+
+  // --- the recommendation
+  body.append(h("div", { class: "card" },
+    h("h3", {}, "Recommendation packet"),
+    h("div", { class: "rec" }, h("span", { class: "chip big " + p.recommendation }, p.recommendation.replaceAll("_", " ")),
+      h("div", { style: "flex:1;min-width:240px" }, h("div", {}, p.summary),
+        h("div", { class: "muted small", style: "margin-top:4px" }, "Confidence floor ", h("b", {}, c2(p.confidence_floor)), " = the lowest usable agent confidence (never an average). Packet built in ", p.packet_ms, " ms."))),
+    p.escalations.length ? h("div", { style: "margin-top:10px" }, h("h3", {}, "Why a written reason is required"), h("ul", { class: "plain" }, p.escalations.map(e => h("li", {}, h("b", {}, e.code.replaceAll("_", " ")), " — ", e.detail)))) : null));
+
+  if (p.conflicts.length) body.append(h("div", { class: "card" }, h("h3", {}, "Conflicts surfaced (not averaged)"),
+    h("ul", { class: "plain" }, p.conflicts.map(k => h("li", {}, chip(k.severity, k.severity === "HARD" ? "bad" : "warn"), " ", h("b", {}, k.type.replaceAll("_", " ")), " — ", k.description)))));
+
+  // --- four agent cards
+  const cards = h("div", { class: "agents" });
+  for (const v of [...p.agents].sort((a, b) => AGENT_ORDER.indexOf(a.output.agent) - AGENT_ORDER.indexOf(b.output.agent))) cards.append(agentCard(v));
+  body.append(cards);
+
+  body.append(h("div", { class: "two" },
+    h("div", { class: "card" }, h("h3", {}, "Conditions"), p.conditions.length ? h("ul", { class: "plain" }, p.conditions.map(x => h("li", {}, x))) : h("span", { class: "muted" }, "None.")),
+    h("div", { class: "card" }, h("h3", {}, "Unresolved risks"), p.unresolved_risks.length ? h("ul", { class: "plain" }, p.unresolved_risks.map(x => h("li", {}, x))) : h("span", { class: "muted" }, "None."))));
+
+  body.append(actionsCard(c, p));
+  const trail = h("div", { class: "card", id: "trail" }, h("h3", {}, "Audit trail for this case"), h("span", { class: "muted" }, "loading…"));
+  body.append(trail);
+  api("/audit?decision_id=" + encodeURIComponent(c.decision_id)).then(r => { clear(trail).append(h("h3", {}, "Audit trail for this case"), r.ok ? auditTable(r.data, false) : errText(r)); });
+}
+
+function agentCard(v) {
+  const o = v.output, ok = o.status === "OK";
+  const stale = v.flags.includes("STALE_EVIDENCE");
+  const card = h("div", { class: "agent" },
+    h("header", {}, h("b", {}, o.agent), ok ? chip(o.recommendation) : chip(o.status)),
+    ok ? h("div", { class: "small muted" }, "confidence ", h("b", {}, c2(v.effective_confidence)), stale ? " (was " + c2(o.confidence) + " before the stale-data penalty)" : "") : null,
+    ok ? h("div", { class: "bar" }, h("i", { style: "width:" + Math.round(v.effective_confidence * 100) + "%" })) : null,
+    h("p", { style: "margin:4px 0" }, o.rationale || "—"));
+  if (o.conditions.length) card.append(h("ul", { class: "plain" }, o.conditions.map(x => h("li", {}, x))));
+  const flags = [...new Set([...o.risk_flags, ...v.flags])];
+  if (flags.length) put(card, h("div", { style: "margin:6px 0" }, flags.map(f => h("span", { class: "chip warn", style: "margin-right:4px" }, f.replaceAll("_", " ")))));
+  if (o.evidence_ids.length) card.append(h("div", { style: "margin:6px 0" }, o.evidence_ids.map(id => h("span", { class: "evid", title: "Show the evidence behind this claim", onclick: () => showEvidence(id) }, id))));
+  const m = Object.entries(o.metrics || {});
+  if (m.length) card.append(h("details", {}, h("summary", {}, "Numbers (computed by code, not by the model)"),
+    h("dl", { class: "kv" }, m.flatMap(([k, val]) => [h("dt", {}, k), h("dd", { class: "mono" }, typeof val === "number" && /usd/.test(k) ? usd(val) : String(val))]))));
+  card.append(h("div", { class: "muted small", style: "margin-top:6px" }, "mode: " + o.mode));
+  return card;
+}
+async function showEvidence(id) {
+  const r = await api("/evidence/" + id), b = clear($("#dlg-body"));
+  if (!r.ok) b.append(h("p", {}, errText(r)));
+  else { const e = r.data; b.append(h("h2", {}, e.evidence_id), h("dl", { class: "kv" }, ...[["source", e.source], ["issued to", e.agent + " for " + e.decision_id], ["data as of", when(e.as_of)]].flatMap(([k, v]) => [h("dt", {}, k), h("dd", {}, v)])),
+    h("p", {}, e.summary), h("details", { open: true }, h("summary", {}, "Raw payload"), h("pre", {}, JSON.stringify(e.payload, null, 2)))); }
+  $("#dlg").showModal();
+}
+
+/* --- actions: legal disposition / decision --- */
+function actionsCard(c, p) {
+  const card = h("div", { class: "card" }, h("h3", {}, "Your actions"));
+  const open = ["AWAITING_LEGAL", "READY_FOR_DECISION", "LEGAL_BLOCKED"].includes(c.status);
+  if (!open) { card.append(h("div", {}, "This case is closed: ", chip(c.status), c.status === "REVISION_REQUESTED" ? " — see its revision(s) above." : "")); return card; }
+  const roleName = ROLES[state.role][0];
+
+  if (c.status === "AWAITING_LEGAL") {
+    if (state.role !== "legal_reviewer") card.append(h("p", { class: "muted" }, `Waiting for the Legal Reviewer. You are viewing as ${roleName}; switch the role (top right) to act as Legal.`));
+    else {
+      const sel = h("select", {}, ["CLEARED", "CLEARED_WITH_EDITS", "BLOCKED"].map(x => h("option", { value: x }, x.replaceAll("_", " "))));
+      const cm = h("textarea", { placeholder: "Comment (min 10 characters) — recorded in the audit trail" });
+      card.append(h("label", {}, "Legal disposition"), sel, h("label", {}, "Comment"), cm,
+        h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "primary", onclick: () => post(`/cases/${c.decision_id}/legal-disposition`, { disposition: sel.value, comment: cm.value }) }, "Record disposition")));
+    }
+  }
+  if (["AWAITING_LEGAL", "READY_FOR_DECISION", "LEGAL_BLOCKED"].includes(c.status)) {
+    if (state.role !== "decision_owner") card.append(h("p", { class: "muted" }, `Only the Decision Owner records the decision. You are viewing as ${roleName}.`));
+    else {
+      const locked = p.legal_gate === "PENDING" || p.legal_gate === "BLOCKED";
+      const override = p.recommendation === "HOLD";
+      const need = p.requires_reason || override;
+      const reason = h("textarea", { placeholder: need ? "Required (min 10 characters): why are you deciding this way?" : "Optional note" });
+      const rev = h("div", { style: "display:none" }, h("div", { class: "grid2" },
+        ["discount_pct", "weeks", "stores", "budget_usd"].map(k => h("div", {}, h("label", {}, k), h("input", { type: "number", step: "any", name: k, value: c.input[k] })))));
+      put(card, need ? h("p", { class: "small" }, chip("reason required", "warn"), " ", override ? "Approving a HOLD is an override. " : "", "The server rejects a decision without a written reason.") : null,
+        h("label", {}, "Reason"), reason, rev,
+        h("div", { class: "row", style: "margin-top:8px" },
+          h("button", { class: "primary", disabled: locked, title: locked ? "Locked by the legal gate (the server enforces this too)" : "", onclick: () => post(`/cases/${c.decision_id}/decision`, { action: "APPROVE", reason: reason.value }) }, locked ? "Approve (locked)" : "Approve"),
+          h("button", { class: "danger", onclick: () => post(`/cases/${c.decision_id}/decision`, { action: "REJECT", reason: reason.value }) }, "Reject"),
+          h("button", { onclick: e => { if (rev.style.display === "none") { rev.style.display = "block"; e.target.textContent = "Send revision request"; return; }
+            const revised = {}; rev.querySelectorAll("input").forEach(i => { if (+i.value !== c.input[i.name]) revised[i.name] = +i.value; });
+            post(`/cases/${c.decision_id}/decision`, { action: "REVISE", reason: reason.value, revised_input: revised }); } }, "Request revision")));
+    }
+  }
+  return card;
+}
+async function post(path, body) {
+  const r = await api(path, { method: "POST", body });
+  if (!r.ok) return toast(errText(r), "err");
+  toast("Recorded.");
+  if (r.data && r.data.revision_case_id) { await loadCases(); location.hash = "#/case/" + r.data.revision_case_id; return; }
+  refreshCase(state.caseId, state.token); loadCases();
+}
+
+/* ============ 4b) audit view ============ */
+function auditTable(rows, withCase = true) {
+  if (!rows.length) return h("span", { class: "muted" }, "No entries.");
+  const brief = p => Object.entries(p).filter(([, v]) => v != null && typeof v !== "object" || Array.isArray(v) && v.length && typeof v[0] === "string").slice(0, 5).map(([k, v]) => k + "=" + (Array.isArray(v) ? v.join("|") : v)).join("  ");
+  return h("div", { style: "overflow:auto" }, h("table", {}, h("thead", {}, h("tr", {}, ["#", "time", "actor", "action", withCase ? "case" : null, "details", "evidence", "hash"].filter(Boolean).map(t => h("th", {}, t)))),
+    h("tbody", {}, rows.map(r => h("tr", {}, h("td", {}, r.seq), h("td", { class: "mono", title: when(r.ts) }, r.ts.slice(11, 19)), h("td", {}, r.actor), h("td", {}, h("b", {}, r.action)),
+      withCase ? h("td", {}, r.decision_id ? h("a", { href: "#/case/" + r.decision_id }, r.decision_id) : "") : null,
+      h("td", { class: "small" }, brief(r.payload)), h("td", { class: "mono" }, r.evidence_ids.length ? r.evidence_ids.length + (r.evidence_ids.length === 1 ? " id" : " ids") : ""), h("td", { class: "mono", title: r.hash }, r.hash.slice(0, 8)))))));
+}
+async function showAudit() {
+  ++state.token; closeStream(); state.caseId = null;
+  const v = clear($("#view")), out = h("div", { class: "card" }, "loading…"), ver = h("div", { id: "verify", class: "small" });
+  v.append(h("div", { class: "card" }, h("h2", {}, "Audit log"), h("p", { class: "muted" }, "Append-only and hash-chained: every entry contains the hash of the previous one. Verification recomputes the whole chain."),
+    h("div", { class: "row" }, h("button", { class: "primary", onclick: async () => { const r = await api("/audit/verify"); clear(ver).append(r.data.ok ? h("span", { class: "banner ok", style: "display:inline-block;margin:0" }, `Chain intact — ${r.data.entries} entries. Head ${r.data.head.slice(0, 16)}…`) : h("span", { class: "banner bad", style: "display:inline-block;margin:0" }, `BROKEN at entry #${r.data.first_bad_seq}: ${r.data.reason}`)); } }, "Verify chain"), ver)), out);
+  const r = await api("/audit?limit=300"); clear(out).append(h("h3", {}, "Latest 300 entries (newest first)"), r.ok ? auditTable(r.data) : errText(r));
+}
+
+/* ============ 4c) admin view ============ */
+async function showAdmin() {
+  ++state.token; closeStream(); state.caseId = null;
+  const v = clear($("#view"));
+  if (state.role !== "admin") v.append(h("div", { class: "banner warn" }, "Viewing as ", ROLES[state.role][0], ": you can look, but changes need the Admin role (the server will refuse otherwise)."));
+  const [st, cfg, ag, ds, ru] = await Promise.all(["/admin/stats", "/admin/config", "/admin/agents", "/admin/data-sources", "/admin/rules"].map(p => api(p)));
+  const s = st.data;
+  v.append(h("div", { class: "card" }, h("h2", {}, "Prototype numbers"), s ? h("dl", { class: "kv" }, ...[
+    ["cases", s.cases], ["agent outputs", s.agent_outputs], ["packets", s.packets], ["audit entries", s.audit_entries],
+    ["packet build time p50 / p95 / max (ms)", s.packet_ms ? [s.packet_ms.p50, s.packet_ms.p95, s.packet_ms.max].join(" / ") : "–"],
+    ["cases by status", Object.entries(s.cases_by_status).map(([k, n]) => k + ": " + n).join(", ") || "–"]].flatMap(([k, x]) => [h("dt", {}, k), h("dd", {}, x)])) : null));
+
+  const inputs = {};
+  v.append(h("div", { class: "card" }, h("h2", {}, "Thresholds (configuration, not code)"),
+    h("p", { class: "muted small" }, "Changing these affects the next case only, and every change is written to the audit log."),
+    h("div", { class: "grid2" }, Object.entries(cfg.data).map(([k, x]) => h("div", {}, h("label", {}, k), inputs[k] = h("input", { type: "number", step: "any", value: x })))),
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { class: "primary", onclick: async () => {
+      const changes = {}; for (const [k, el] of Object.entries(inputs)) if (+el.value !== cfg.data[k]) changes[k] = +el.value;
+      if (!Object.keys(changes).length) return toast("Nothing changed.");
+      const r = await api("/admin/config", { method: "PUT", body: changes }); toast(r.ok ? "Saved." : errText(r), r.ok ? "" : "err"); if (r.ok) showAdmin(); } }, "Save thresholds"))));
+
+  v.append(h("div", { class: "card" }, h("h2", {}, "Agent registry"),
+    h("table", {}, h("thead", {}, h("tr", {}, ["agent", "enabled", "trigger", "refresh source", "last refresh"].map(t => h("th", {}, t)))),
+      h("tbody", {}, ag.data.map(a => h("tr", {}, h("td", {}, h("b", {}, a.name)),
+        h("td", {}, h("input", { type: "checkbox", checked: !!a.enabled, onchange: async e => { const r = await api("/admin/agents/" + a.name, { method: "PUT", body: { enabled: e.target.checked } }); toast(r.ok ? a.name + (e.target.checked ? " enabled" : " disabled") : errText(r), r.ok ? "" : "err"); if (!r.ok) showAdmin(); } })),
+        h("td", {}, a.trigger_type), h("td", {}, a.refresh_source || "–"), h("td", { class: "mono" }, when(a.last_refresh)))))),
+    h("p", { class: "muted small" }, "Disable LEGAL to see the gate fail closed: every new case then needs a human legal review.")));
+
+  v.append(h("div", { class: "card" }, h("h2", {}, "Data sources"),
+    h("table", {}, h("thead", {}, h("tr", {}, ["source", "origin", "refreshed", "max age (h)"].map(t => h("th", {}, t)))),
+      h("tbody", {}, ds.data.map(d => h("tr", {}, h("td", {}, d.name), h("td", {}, d.origin || "–"), h("td", { class: "mono" }, when(d.refreshed_at)), h("td", {}, d.max_age_hours > 1e6 ? "∞" : d.max_age_hours))))),
+    h("div", { class: "row", style: "margin-top:8px" }, h("button", { onclick: async () => { const r = await api("/admin/refresh", { method: "POST" }); toast(r.ok ? "Data sources refreshed." : errText(r), r.ok ? "" : "err"); if (r.ok) showAdmin(); } }, "Refresh now"),
+      h("span", { class: "muted small" }, "Evidence older than its max age is flagged stale and its agent's confidence is multiplied by the stale penalty."))));
+
+  v.append(h("div", { class: "card" }, h("h2", {}, "Legal rules"),
+    h("table", {}, h("thead", {}, h("tr", {}, ["rule", "name", "categories", "claim keywords", "severity", "enabled"].map(t => h("th", {}, t)))),
+      h("tbody", {}, ru.data.map(r => h("tr", {}, h("td", { class: "mono" }, r.rule_id), h("td", {}, r.name), h("td", {}, r.category_match || "–"), h("td", {}, r.keyword_match || "–"), h("td", {}, r.severity),
+        h("td", {}, h("input", { type: "checkbox", checked: !!r.enabled, onchange: async e => {
+          const r2 = await api("/admin/rules/" + r.rule_id, { method: "PUT", body: { name: r.name, category_match: r.category_match, keyword_match: r.keyword_match, severity: r.severity, enabled: e.target.checked } });
+          toast(r2.ok ? "Rule updated." : errText(r2), r2.ok ? "" : "err"); if (!r2.ok) showAdmin(); } }))))))));
+}
+
+/* ============ 5) routing ============ */
+function route() {
+  markNav();
+  const hash = location.hash || "#/";
+  if (hash.startsWith("#/case/")) return showCase(decodeURIComponent(hash.slice(7)));
+  if (hash.startsWith("#/audit")) return showAudit();
+  if (hash.startsWith("#/admin")) return showAdmin();
+  ++state.token; closeStream(); state.caseId = null; loadCases();
+  clear($("#view")).append(h("div", { class: "card muted" }, "Pick a scripted scenario on the left, or open a new case. Cases appear in the list as they are created."));
+}
+$("#dlg-close").onclick = () => $("#dlg").close();
+window.addEventListener("hashchange", route);
+initHeader(); initSidebar().then(route);
+</script>
+<noscript>This page needs JavaScript.</noscript>
+</body>
+</html>
